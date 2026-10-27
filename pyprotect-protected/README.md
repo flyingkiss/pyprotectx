@@ -5,8 +5,15 @@ encrypted module loader (`.enc` import hook) + Ed25519 license verification.
 
 This is the **client-side** dependency: lightweight, only requires `pynacl`.
 
+## ⚠️ Vendor patch required
+
+The wheel on PyPI ships with **placeholder keys** — out of the box it cannot
+decrypt `.enc` files or verify real licenses. Vendors must inject their own
+keys with `pyprotect runtime-patch` (see the pyprotectx documentation) and
+distribute the patched build to their customers via a private channel.
+
 ```bash
-pip install pyprotectx-protected
+pyprotect runtime-patch --pub-key keys/license_ed25519.pub --nacl-key <hex> --out patched/
 ```
 
 ```python
