@@ -11,6 +11,8 @@ pip install pyprotectx
 pip install pyprotectx[compile]
 ```
 
+**平台支持**：macOS 已实测；Windows / Linux 理论兼容（`.enc` 加密路径为纯 Python、无平台差异；Cython 编译路径在 Windows 需 MSVC Build Tools），尚未在真实环境回归验证。
+
 客户侧运行时包 `pyprotectx-protected`：PyPI 版只带占位符密钥，需厂商注入密钥后自行分发，见[运行时包与厂商定制](#运行时包-pyprotectx-protected-与厂商定制)。
 
 ## 同类工具对比
@@ -19,9 +21,8 @@ pip install pyprotectx[compile]
 |------|------|------|------|------|
 | 保护方式 | Cython 编译 → 机器码（.so）；NaCl 加密兜底（.enc） | 字节码混淆（v8+ 已有公开解密工具）；BCC 函数→C（暂无公开解密工具） | AES-128 加密，密钥嵌 C 扩展 | AES-256 加密，密钥由官方服务管理 |
 | 授权能力 | Ed25519 签名 + 机器绑定，全离线 | 机器绑定 + 过期（付费档） | 无 | 过期（SaaS 托管） |
-| 成熟度 | 开源项目 | 10 年+，广泛生产使用 | 10 年，活跃维护 | 商业订阅运营 |
 | 构建要求 | 需 C 编译器，.so 按平台分别构建 | 无需编译器，产物跨平台 | 需自行编译安装（无预编译包） | 无需编译器 |
-| 费用 | MIT | 免费档限评估/非商用，商业需买断（Basic/Pro/Group，CI 按年） | Apache-2.0 完全免费 | 试用档产物 24h 过期；正式 £15/月/开发机 起 |
+| 费用 | MIT | 免费档限评估/非商用，商业需买断（Basic/Pro/Group，CI 按年） | Apache-2.0 完全免费 | 试用24h；正式收费 |
 
 **pyprotect 的差异化定位：**
 
@@ -57,13 +58,13 @@ pyprotect license generate \
 
 客户在目标机器上获取 machine-id：
 
-```bash
-# Linux
-cat /etc/machine-id
+| 平台 | 获取命令 |
+|------|---------|
+| Linux | `cat /etc/machine-id` |
+| macOS | `ioreg -rd1 -c IOPlatformExpertDevice \| awk -F'"' '/IOPlatformUUID/{print $4}'` |
+| Windows | PowerShell：`(Get-CimInstance Win32_ComputerSystemProduct).UUID` |
 
-# macOS
-ioreg -rd1 -c IOPlatformExpertDevice | grep IOPlatformUUID
-```
+> 机器码在重装系统 / 更换主板后会变化。容器环境没有稳定机器码，见 §4 的容器部署说明。
 
 #### 1.3 （可选）本地验证授权文件
 
@@ -111,6 +112,8 @@ ed25519_public_key: keys/license_ed25519.pub   # 公钥路径
 pyprotect build . --pub-key keys/license_ed25519.pub
 ```
 
+前置条件：需要 C 编译器（macOS 自带 Xcode CLT；Linux 用 gcc；Windows 需安装 MSVC Build Tools）。没有编译器的环境可用 `--skip-cython` 走纯加密路径。
+
 构建流程：
 
 ```
@@ -152,12 +155,28 @@ from myapp import App
 App().run()
 ```
 
-客户部署时需设置环境变量：
+客户部署：`LICENSE_FILE` 指向授权文件即可，**机器码默认自动探测**（Windows 注册表 MachineGuid / Linux `/etc/machine-id` / macOS IOPlatformUUID），无需额外设置：
 
 ```bash
 export LICENSE_FILE=/path/to/license.lic
-export LICENSE_MACHINE_ID=<机器ID>
 ```
+
+仅以下情况需用 `LICENSE_MACHINE_ID` 显式覆盖：
+
+**容器部署**（容器内没有稳定机器码）——为每个部署指定固定身份，容器重建、宿主机重启均不受影响：
+
+```yaml
+# docker-compose.yml
+services:
+  app:
+    environment:
+      LICENSE_FILE: /app/license.lic
+      LICENSE_MACHINE_ID: "prod-cluster-01"   # 向厂商按此 ID 申请授权
+```
+
+**自动探测失败**时（运行日志会明确提示）。
+
+> 绑定强度说明：自动探测时机器码来自真实硬件，客户谎报即自失效；手动覆盖时绑定强度取决于部署纪律。
 
 ### 5. 授权校验行为（fail-closed）
 
@@ -208,8 +227,8 @@ Nonce 策略：每次加密生成随机 24 字节 nonce，拼在密文头部。
 # 1. 生成密钥对
 pyprotect license init -o keys/
 
-# 2. 获取当前机器 ID，生成 License
-MACHINE=$(cat /etc/machine-id)   # Linux；macOS 用 ioreg -rd1 -c IOPlatformExpertDevice | grep IOPlatformUUID
+# 2. 获取当前机器 ID，生成 License（其他平台命令见 §1.2 对照表）
+MACHINE=$(cat /etc/machine-id)
 pyprotect license generate --machine-id $MACHINE --expire-days 365 \
   --private-key keys/license_ed25519.key -o license.lic
 
