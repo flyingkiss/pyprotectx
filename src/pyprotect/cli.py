@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import stat
 import sys
 from pathlib import Path
 
@@ -245,7 +244,11 @@ def build(
     click.echo("  Done.")
 
     # ── Stats ──
-    so_count = sum(1 for _ in root.rglob("*.so") if ".venv" not in str(_) and "site-packages" not in str(_))
+    so_count = sum(
+        1
+        for p in root.rglob("*")
+        if p.suffix in (".so", ".pyd") and ".venv" not in str(p) and "site-packages" not in str(p)
+    )
     enc_count = sum(1 for _ in root.rglob("*.enc"))
     click.echo(f"\n  .so files: {so_count}")
     click.echo(f"  .enc files: {enc_count}")
@@ -341,6 +344,25 @@ def runtime_patch(pub_key: str, nacl_key: str | None, target: str | None, out: s
     click.echo("  1. Build the patched runtime:  cd <runtime-package-root> && python -m build")
     click.echo("  2. Distribute that wheel to YOUR customers (private index or direct install)")
     click.echo("  !! NEVER publish a patched runtime to a public index — it contains your keys.")
+
+
+@main.command("machine-id")
+def machine_id_command():
+    """Print this machine's auto-detected identifier (for license issuance)."""
+
+    from pyprotect.license_gen import detect_machine_id
+
+    mid = detect_machine_id()
+    if mid:
+        click.echo(mid)
+    else:
+        click.echo(
+            "Could not auto-detect a machine id (common in containers).\n"
+            "Pick an explicit identifier for this deployment instead, and set\n"
+            "LICENSE_MACHINE_ID accordingly at runtime.",
+            err=True,
+        )
+        sys.exit(1)
 
 
 # ── license ───────────────────────────────────────────────────

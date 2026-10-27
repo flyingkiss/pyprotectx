@@ -6,7 +6,9 @@ should be Cython-compiled to .so before distribution.
 
 Env vars:
   LICENSE_FILE         Path to the .lic license file
-  LICENSE_MACHINE_ID   Machine identifier for binding
+  LICENSE_MACHINE_ID   Optional override; by default the machine id is
+                       auto-detected (Windows registry MachineGuid /
+                       Linux /etc/machine-id / macOS IOPlatformUUID)
   PYPROTECT_ALLOW_DEV  Set to "1" to allow running without a license
                        (development only; default is to fail closed)
 
@@ -24,7 +26,9 @@ import base64
 import json
 import logging
 import os
+import sys
 import time
+from pathlib import Path
 
 from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
@@ -32,6 +36,63 @@ from nacl.signing import VerifyKey
 logger = logging.getLogger(__name__)
 
 _ED25519_PUBLIC_KEY = bytes(32)
+
+_LINUX_MACHINE_ID_PATHS = ("/etc/machine-id", "/var/lib/dbus/machine-id")
+
+
+def _detect_linux_machine_id() -> str:
+    for path in _LINUX_MACHINE_ID_PATHS:
+        try:
+            value = Path(path).read_text(encoding="utf-8").strip()
+            if value:
+                return value
+        except OSError:
+            continue
+    return ""
+
+
+def _detect_macos_machine_id() -> str:
+    try:
+        import subprocess
+
+        out = subprocess.run(
+            ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        ).stdout
+    except (OSError, ValueError):
+        return ""
+    for line in out.splitlines():
+        if "IOPlatformUUID" in line:
+            parts = line.split('"')
+            if len(parts) >= 4:
+                return parts[3].strip()
+    return ""
+
+
+def _detect_windows_machine_id() -> str:
+    try:
+        import winreg
+
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography"
+        ) as key:
+            value, _ = winreg.QueryValueEx(key, "MachineGuid")
+        return str(value).strip()
+    except (OSError, ImportError):
+        return ""
+
+
+def _detect_machine_id() -> str:
+    """Best-effort machine identifier: Windows MachineGuid registry value,
+    Linux /etc/machine-id (then dbus), or macOS IOPlatformUUID."""
+    if sys.platform == "win32":
+        return _detect_windows_machine_id()
+    if sys.platform == "darwin":
+        return _detect_macos_machine_id()
+    return _detect_linux_machine_id()
 
 
 def _mask_machine_id(mid: str) -> str:
@@ -42,7 +103,7 @@ def _mask_machine_id(mid: str) -> str:
 
 def get_license_info() -> dict:
     lic_path = os.environ.get("LICENSE_FILE", "")
-    machine_id = os.environ.get("LICENSE_MACHINE_ID", "")
+    machine_id = os.environ.get("LICENSE_MACHINE_ID") or _detect_machine_id()
 
     if not lic_path or not os.path.isfile(lic_path):
         if os.environ.get("PYPROTECT_ALLOW_DEV") == "1":
@@ -103,7 +164,21 @@ def get_license_info() -> dict:
             "machine_id": None,
         }
 
-    if not machine_id or payload.get("machine_id") != machine_id:
+    if not machine_id:
+        logger.error(
+            "Machine id not detected (common in containers) — "
+            "set LICENSE_MACHINE_ID explicitly"
+        )
+        return {
+            "mode": "prod",
+            "valid": False,
+            "days_remaining": 0,
+            "expire_at": None,
+            "issued_at": None,
+            "machine_id": None,
+        }
+
+    if payload.get("machine_id") != machine_id:
         logger.error("License machine ID mismatch")
         return {
             "mode": "prod",

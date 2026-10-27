@@ -12,6 +12,7 @@ __all__ = [
     "generate_license",
     "verify_license",
     "get_license_info",
+    "detect_machine_id",
 ]
 
 
@@ -126,6 +127,53 @@ def get_license_info(
         "issued_at": payload.get("issued_at"),
         "machine_id": machine_id[:4] + "****" + machine_id[-4:] if len(machine_id) > 8 else machine_id,
     }
+
+
+def detect_machine_id() -> str:
+    """Best-effort machine identifier for license issuance.
+
+    Keep the logic in sync with templates/license_verify.py::_detect_machine_id.
+    """
+    import subprocess
+    import sys
+
+    if sys.platform == "win32":
+        try:
+            import winreg
+
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography"
+            ) as key:
+                value, _ = winreg.QueryValueEx(key, "MachineGuid")
+            return str(value).strip()
+        except OSError:
+            return ""
+
+    for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+        try:
+            value = Path(path).read_text(encoding="utf-8").strip()
+            if value:
+                return value
+        except OSError:
+            continue
+
+    if sys.platform == "darwin":
+        try:
+            out = subprocess.run(
+                ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True,
+            ).stdout
+        except (OSError, ValueError):
+            return ""
+        for line in out.splitlines():
+            if "IOPlatformUUID" in line:
+                parts = line.split('"')
+                if len(parts) >= 4:
+                    return parts[3].strip()
+    return ""
 
 
 def verify_license(
