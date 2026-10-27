@@ -130,6 +130,11 @@ def init(project_dir: str, packages: tuple[str, ...], keep_plain: tuple[str, ...
 @click.argument("project_dir", type=click.Path(exists=True, file_okay=False), required=False)
 @click.option("--skip-cython", is_flag=True, help="Skip Cython, encrypt only")
 @click.option("--pub-key", help="Ed25519 public key path (overrides pyprotect.yaml)")
+@click.option(
+    "--nacl-key",
+    help="64-hex-char NaCl key (default: random). Pass the same key to `runtime-patch` "
+    "if customers will use a patched pyprotect-protected runtime for .enc loading",
+)
 @click.option("--packages", "-p", multiple=True, help="Override packages from pyprotect.yaml")
 @click.option("--keep-plain", "-k", multiple=True, help="Override keep_plain from pyprotect.yaml")
 @click.option("--no-license", is_flag=True, help="Do not inject license key (skip license_verify.py)")
@@ -137,6 +142,7 @@ def build(
     project_dir: str | None,
     skip_cython: bool,
     pub_key: str | None,
+    nacl_key: str | None,
     packages: tuple[str, ...],
     keep_plain: tuple[str, ...],
     no_license: bool,
@@ -179,7 +185,17 @@ def build(
 
     # ── 2. Generate NaCl key + inject into bootstrap ──
     click.echo("\n[2/5] Injecting NaCl encryption key...")
-    nacl_key = generate_key()
+    if nacl_key:
+        try:
+            nacl_key = bytes.fromhex(nacl_key)
+        except ValueError:
+            click.echo("Error: --nacl-key must be 64 hex chars", err=True)
+            sys.exit(1)
+        if len(nacl_key) != 32:
+            click.echo("Error: --nacl-key must decode to 32 bytes (64 hex chars)", err=True)
+            sys.exit(1)
+    else:
+        nacl_key = generate_key()
     bootstrap_file = root / "_bootstrap.py"
     if not bootstrap_file.exists():
         click.echo("  Warning: _bootstrap.py not found, creating from template", err=True)
@@ -234,6 +250,97 @@ def build(
     click.echo(f"\n  .so files: {so_count}")
     click.echo(f"  .enc files: {enc_count}")
     click.echo("Build complete.")
+
+
+# ── runtime-patch ─────────────────────────────────────────────
+
+
+def _resolve_runtime_target(explicit: str | None) -> Path:
+    if explicit:
+        p = Path(explicit).resolve()
+        if p.name == "src":
+            p = p / "pyprotect_protected"
+        if not p.is_dir():
+            raise click.ClickException(f"Target package dir not found: {p}")
+        return p
+
+    repo_candidate = (
+        Path(__file__).resolve().parents[2]
+        / "pyprotect-protected"
+        / "src"
+        / "pyprotect_protected"
+    )
+    if repo_candidate.is_dir():
+        return repo_candidate
+
+    import importlib.util
+
+    spec = importlib.util.find_spec("pyprotect_protected")
+    if spec and spec.origin:
+        return Path(spec.origin).parent
+    raise click.ClickException(
+        "Cannot locate pyprotect_protected source. Pass --target /path/to/pyprotect_protected"
+    )
+
+
+@main.command("runtime-patch")
+@click.option("--pub-key", required=True, type=click.Path(exists=True), help="Ed25519 public key file")
+@click.option(
+    "--nacl-key",
+    help="64-hex-char NaCl key; MUST match the key used by `pyprotect build --nacl-key`. "
+    "Random if omitted (then the runtime cannot decrypt project .enc files)",
+)
+@click.option("--target", help="Path to the pyprotect_protected package source dir (default: auto-detect)")
+@click.option("--out", type=click.Path(file_okay=False), help="Write a patched copy here instead of patching in place")
+def runtime_patch(pub_key: str, nacl_key: str | None, target: str | None, out: str | None):
+    """Inject vendor keys into the pyprotect-protected runtime package.
+
+    The published runtime wheel ships placeholder keys and cannot decrypt
+    .enc files or verify licenses until patched. Patch it, then build and
+    distribute the patched runtime to YOUR customers (never to a public index).
+    """
+
+    if nacl_key:
+        try:
+            key_bytes = bytes.fromhex(nacl_key)
+        except ValueError:
+            raise click.ClickException("--nacl-key must be 64 hex chars")
+        if len(key_bytes) != 32:
+            raise click.ClickException("--nacl-key must decode to 32 bytes (64 hex chars)")
+    else:
+        key_bytes = generate_key()
+
+    pub_bytes = Path(pub_key).read_bytes()
+    if len(pub_bytes) != 32:
+        raise click.ClickException(f"Public key must be 32 bytes, got {len(pub_bytes)}")
+
+    target_dir = _resolve_runtime_target(target)
+    if out:
+        out_dir = Path(out)
+        if out_dir.exists():
+            shutil.rmtree(out_dir)
+        shutil.copytree(target_dir, out_dir)
+        target_dir = out_dir
+        click.echo(f"Copied runtime source to {out_dir}")
+    else:
+        click.echo(f"Patching in place: {target_dir}")
+
+    for fname, placeholder, key in [
+        ("_bootstrap.py", PLACEHOLDER_NACL, key_bytes),
+        ("license_verify.py", PLACEHOLDER_ED25519, pub_bytes),
+    ]:
+        f = target_dir / fname
+        if not f.exists():
+            raise click.ClickException(f"File not found: {f}")
+        if inject_hex(f, placeholder, key):
+            click.echo(f"  Injected key into {fname}")
+        else:
+            click.echo(f"  {fname}: already patched, skipped")
+
+    click.echo("\nDone. Next steps:")
+    click.echo("  1. Build the patched runtime:  cd <runtime-package-root> && python -m build")
+    click.echo("  2. Distribute that wheel to YOUR customers (private index or direct install)")
+    click.echo("  !! NEVER publish a patched runtime to a public index — it contains your keys.")
 
 
 # ── license ───────────────────────────────────────────────────
