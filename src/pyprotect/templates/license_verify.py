@@ -5,8 +5,10 @@ This file is injected with an Ed25519 public key at build time and
 should be Cython-compiled to .so before distribution.
 
 Env vars:
-  LICENSE_FILE       Path to the .lic license file
-  LICENSE_MACHINE_ID Machine identifier for binding
+  LICENSE_FILE         Path to the .lic license file
+  LICENSE_MACHINE_ID   Machine identifier for binding
+  PYPROTECT_ALLOW_DEV  Set to "1" to allow running without a license
+                       (development only; default is to fail closed)
 
 Integration:
   from license_verify import verify_license
@@ -43,10 +45,23 @@ def get_license_info() -> dict:
     machine_id = os.environ.get("LICENSE_MACHINE_ID", "")
 
     if not lic_path or not os.path.isfile(lic_path):
+        if os.environ.get("PYPROTECT_ALLOW_DEV") == "1":
+            return {
+                "mode": "dev",
+                "valid": True,
+                "days_remaining": None,
+                "expire_at": None,
+                "issued_at": None,
+                "machine_id": None,
+            }
+        logger.error(
+            "License file not found or unreadable: set LICENSE_FILE "
+            "(or PYPROTECT_ALLOW_DEV=1 to explicitly allow development mode)"
+        )
         return {
-            "mode": "dev",
-            "valid": True,
-            "days_remaining": None,
+            "mode": "prod",
+            "valid": False,
+            "days_remaining": 0,
             "expire_at": None,
             "issued_at": None,
             "machine_id": None,

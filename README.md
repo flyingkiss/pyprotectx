@@ -5,16 +5,16 @@ Python 代码保护与授权工具集 — Cython 编译 / NaCl 加密 / Ed25519 
 ## 安装
 
 ```bash
-pip install pyprotect
+pip install pyprotectx
 
 # 需要 Cython 编译功能：
-pip install pyprotect[compile]
+pip install pyprotectx[compile]
 ```
 
 客户侧运行时依赖（轻量，只含 pynacl）：
 
 ```bash
-pip install pyprotect-protected
+pip install pyprotectx-protected
 ```
 
 ## 同类工具对比
@@ -64,7 +64,11 @@ pyprotect license generate \
 客户在目标机器上获取 machine-id：
 
 ```bash
+# Linux
 cat /etc/machine-id
+
+# macOS
+ioreg -rd1 -c IOPlatformExpertDevice | grep IOPlatformUUID
 ```
 
 #### 1.3 （可选）本地验证授权文件
@@ -152,14 +156,14 @@ export LICENSE_MACHINE_ID=<机器ID>
 
 ```dockerfile
 FROM python:3.12-slim AS build
-RUN pip install pyprotect[compile] pynacl
+RUN pip install pyprotectx[compile] pynacl
 COPY . /project
 WORKDIR /project
 RUN pyprotect build . --pub-key keys/license_ed25519.pub
 
 FROM python:3.12-slim AS runtime
 COPY --from=build /project /app
-RUN pip install pyprotect-protected
+RUN pip install pyprotectx-protected
 CMD ["python", "/app/main.py"]
 ```
 
@@ -199,12 +203,12 @@ LICENSE_FILE=license.lic LICENSE_MACHINE_ID=$MACHINE python main.py
 
 ---
 
-## `pyprotect-protected` 运行时包
+## `pyprotectx-protected` 运行时包
 
 客户侧只需安装这个轻量包：
 
 ```bash
-pip install pyprotect-protected
+pip install pyprotectx-protected
 ```
 
 ```python
@@ -214,6 +218,25 @@ from pyprotect_protected import verify_license
 if not verify_license():
     sys.exit(1)
 ```
+
+---
+
+## 授权校验行为（fail-closed）
+
+`verify_license()` 默认**失败即拒绝**：
+
+| 场景 | 结果 |
+|------|------|
+| 未设置 `LICENSE_FILE` / 文件不存在 / 签名无效 / 机器不匹配 / 已过期 | ❌ `valid=False`，建议业务退出 |
+| 授权有效且未过期 | ✅ 放行 |
+
+开发调试时若想跳过授权，必须**显式**设置：
+
+```bash
+export PYPROTECT_ALLOW_DEV=1   # 仅限开发环境，受保护产品请勿携带
+```
+
+> `pyprotect license verify` 在校验失败时以 exit code 1 退出，便于脚本化判断。
 
 ---
 

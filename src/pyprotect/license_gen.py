@@ -60,9 +60,9 @@ def get_license_info(
 
     if not lic_path.is_file():
         return {
-            "mode": "dev",
-            "valid": True,
-            "days_remaining": None,
+            "mode": "prod",
+            "valid": False,
+            "days_remaining": 0,
             "expire_at": None,
             "issued_at": None,
             "machine_id": None,

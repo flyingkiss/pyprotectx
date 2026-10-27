@@ -63,6 +63,10 @@ def _cleanup(project_root: Path, config: ProjectConfig) -> None:
                         continue
                     full.unlink(missing_ok=True)
 
+    # Root-level .c leftovers from _bootstrap.py / license_verify.py compilation
+    for name in ("_bootstrap.c", "license_verify.c"):
+        (project_root / name).unlink(missing_ok=True)
+
     for glob_pat in ["__pycache__", "build", "*.egg-info"]:
         if "*" in glob_pat:
             for p in project_root.glob(glob_pat):
@@ -282,13 +286,14 @@ def license_verify(license_file: str, machine_id: str, public_key: str):
 
     pub_bytes = Path(public_key).read_bytes()
     info = get_license_info(license_file, machine_id, pub_bytes)
-    info["error"] = f"{list(info.keys())}" if "error" in info else ""
     if info["valid"]:
         click.echo("License VALID")
     else:
         click.echo("License INVALID")
     for k, v in info.items():
         click.echo(f"  {k}: {v}")
+    if not info["valid"]:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
