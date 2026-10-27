@@ -52,6 +52,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/pyprotect"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: tests that compile Cython extensions (require a C compiler)",
+]
+
 [tool.uv]
 dev-dependencies = [
     "cython>=3.0",
