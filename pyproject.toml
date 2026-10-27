@@ -1,6 +1,6 @@
 [project]
 name = "pyprotectx"
-version = "0.1.1"
+version = "0.2.0"
 description = "Python code protection & licensing toolkit: Cython compile, NaCl encrypt, Ed25519 license"
 readme = "README.md"
 license = "MIT"
