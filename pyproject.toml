@@ -42,6 +42,11 @@ dependencies = [
 [project.optional-dependencies]
 compile = ["cython>=3.0", "setuptools>=68"]
 
+[project.urls]
+Homepage = "https://github.com/flyingkiss/pyprotectx"
+Repository = "https://github.com/flyingkiss/pyprotectx"
+Issues = "https://github.com/flyingkiss/pyprotectx/issues"
+
 [project.scripts]
 pyprotect = "pyprotect.cli:main"
 
